@@ -4,21 +4,32 @@ from Sastrawi.Stemmer.StemmerFactory import StemmerFactory
 from Sastrawi.StopWordRemover.StopWordRemoverFactory import StopWordRemoverFactory
 import pickle
 
-factory_stemmer = StemmerFactory()
-stemmer = factory_stemmer.create_stemmer()
+stemmer = None
+stopwords_set = None
+clf = None
+vectorizer = None
 
-factory_stopwords = StopWordRemoverFactory()
-stopwords_list = factory_stopwords.get_stop_words()
-important_words = {'anda', 'kamu', 'di', 'ke', 'dari', 'ini', 'itu', 'adalah'}
-stopwords_set = set(stopwords_list) - important_words
+def get_spam_tools():
+    global stemmer, stopwords_set, clf, vectorizer
+    
+    if clf is None:
+        factory_stemmer = StemmerFactory()
+        stemmer = factory_stemmer.create_stemmer()
+        
+        factory_stopwords = StopWordRemoverFactory()
+        stopwords_list = factory_stopwords.get_stop_words()
+        important_words = {'anda', 'kamu', 'di', 'ke', 'dari', 'ini', 'itu', 'adalah'}
+        stopwords_set = set(stopwords_list) - important_words
+        
+        with open('model_saved/rf_model.pkl', 'rb') as f:
+            clf = pickle.load(f)
 
-with open('model_saved/rf_model.pkl', 'rb') as f:
-    clf = pickle.load(f)
-
-with open('model_saved/vectorizer.pkl', 'rb') as f:
-    vectorizer = pickle.load(f)
+        with open('model_saved/vectorizer.pkl', 'rb') as f:
+            vectorizer = pickle.load(f)
 
 def predict(raw_text: str):
+    get_spam_tools()
+    
     text_lower = raw_text.lower()
     
     if re.search(r'cutt\.ly|bit\.ly|s\.id|rekening diblokir|klik tautan|undian|hadiah rp', text_lower):
