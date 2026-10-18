@@ -7,6 +7,6 @@ paddleocr
 pandas
 pydantic
 Sastrawi
-scikit-learn==1.9.1
+scikit-learn==1.7.2
 gradio
 spaces
