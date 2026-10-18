@@ -1,6 +1,5 @@
 import gradio as gr
 import spaces
-from main import app as fastapi_app
 
 @spaces.GPU
 def check_status():
@@ -11,5 +10,7 @@ with gr.Blocks() as demo:
     check_server = gr.Button("Server status check")
     result = gr.Textbox(label="Status")
     check_server.click(fn=check_status, inputs=[], outputs=result)
+    
+from main import app as fastapi_app
 
 app = gr.mount_gradio_app(fastapi_app, demo, path="/")
