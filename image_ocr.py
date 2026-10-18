@@ -7,7 +7,13 @@ import cv2
 import re
 from paddleocr import PaddleOCR
 
-ocr = PaddleOCR(use_angle_cls=True, lang='en')
+ocr_model = None
+
+def get_ocr():
+    global ocr_model
+    if ocr_model is None:
+        ocr_model = PaddleOCR(use_angle_cls=True, lang='en', use_gpu=False)
+    return ocr_model
 
 STOPWORDS_ID = {
     'yang','dan','di','ke','dari','ini','itu','untuk','pada','dengan','anda','saya',
@@ -43,13 +49,19 @@ def preprocess_image(img_np):
     return adaptive_thresh
 
 def extract_text_from_image(image_input):
-    result = ocr.ocr(image_input)
+    processed_image = preprocess_image(image_input)
+    
+    model = get_ocr()
+    result = model.ocr(processed_image)
     extracted_text = []
     
     if result and result[0]:
         for line in result[0]:
-            teks = line[1][0]
-            extracted_text.append(teks)
+            raw_text = line[1][0]
+            cleaned_text = clean_text(raw_text)
+            
+            if cleaned_text:
+                extracted_text.append(cleaned_text)
             
     print(extracted_text)
     return " ".join(extracted_text)
