@@ -28,7 +28,7 @@ app = gr.mount_gradio_app(
     demo,
     path="/",
     ssr_mode=False,
-)
+)   
     
 if __name__ == "__main__":
     import subprocess
