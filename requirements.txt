@@ -8,3 +8,5 @@ pandas
 pydantic
 Sastrawi
 scikit-learn
+gradio
+spaces

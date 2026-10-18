@@ -1,5 +1,6 @@
 ---
 title: Protek API Server
-sdk: docker
+sdk: gradio
+app_file: app.py
 pinned: false
 ---
