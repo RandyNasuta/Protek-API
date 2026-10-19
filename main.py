@@ -38,7 +38,7 @@ async def detect_phishing_text(payload: TextPayload):
     
     if is_phishing:
         severity = "Tinggi" if score > 0.8 else "Sedang"
-        message = "Peringatan: Pesan ini terindikasi kuat sebagai penipuan (Scam/Phishing)."
+        message = "Pesan ini terindikasi kuat sebagai penipuan (Scam/Phishing)."
         recommendation = "Jangan mengklik tautan (link) apa pun atau membagikan data pribadi. Segera hapus atau blokir pengirim."
     else:
         severity = "Aman"
@@ -110,7 +110,7 @@ async def detect_phishing_image(file: UploadFile = File(...)):
         
     if is_phishing:
         severity = "Tinggi" if score > 0.8 else "Sedang"
-        message = "Peringatan: Pesan ini terindikasi kuat sebagai penipuan (Scam/Phishing)."
+        message = "Pesan ini terindikasi kuat sebagai penipuan (Scam/Phishing)."
         recommendation = "Jangan mengklik tautan (link) apa pun atau membagikan data pribadi. Segera hapus atau blokir pengirim."
     else:
         severity = "Aman"
