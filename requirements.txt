@@ -2,7 +2,7 @@ fastapi
 uvicorn
 numpy<2.0.0
 opencv-python-headless
-paddlepaddle
+paddlepaddle==3.2.2
 paddleocr
 pandas
 pydantic
