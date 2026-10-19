@@ -81,11 +81,12 @@ async def detect_phishing_image(file: UploadFile = File(...)):
         
         extracted_text = extract_text_from_image(img_cv2)
         
-        if not extracted_text.strip():
+        
+        if not isinstance(extracted_text, str) or not extracted_text.strip():
             return JSONResponse(
-                status_code=400,
+                status_code=422,
                 content={
-                    "code": 400,
+                    "code": 422,
                     "status": "error",
                     "message": "Tidak ada teks yang dapat diekstrak dari gambar.",
                     "data": None

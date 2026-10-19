@@ -57,36 +57,56 @@ def preprocess_image(img_np):
     
     return adaptive_thresh
 
+
 def extract_text_from_image(image_input):
     try:
         processed_image = preprocess_image(image_input)
-                
+        
+        if len(processed_image.shape) == 2:
+            processed_image = cv2.cvtColor(
+                processed_image,
+                cv2.COLOR_GRAY2BGR
+            )
+            
+        if (
+            processed_image.ndim != 3
+            or processed_image.shape[2] != 3
+        ):
+            raise ValueError(
+                f"Format gambar tidak valid: {processed_image.shape}"
+            )
+
         model = get_ocr()
         results = model.predict(processed_image)
+
         extracted_text = []
-        
+
         if results is None:
             return ""
-        
+
         for result in results:
             if isinstance(result, dict):
-                texts = result.get("rec_texts", [])
+                texts = result.get("rec_texts") or []
             else:
-                texts = result.get("rec_texts", [])
-
-                if texts is None:
-                    texts = []
+                texts = getattr(result, "rec_texts", None) or []
 
             for raw_text in texts:
+                if not raw_text:
+                    continue
+
                 cleaned_text = clean_text(raw_text)
 
                 if cleaned_text:
                     extracted_text.append(cleaned_text)
-                            
+
+        final_text = " ".join(extracted_text)
+
         print("Hasil ekstraksi teks:", extracted_text)
-        return " ".join(extracted_text)
+
+        return final_text
+
     except Exception as e:
         import traceback
-
         traceback.print_exc()
         print(f"Error saat ekstrak teks OCR: {e}")
+        raise
