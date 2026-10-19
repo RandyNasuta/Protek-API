@@ -12,7 +12,7 @@ ocr_model = None
 def get_ocr():
     global ocr_model
     if ocr_model is None:
-        ocr_model = PaddleOCR(use_angle_cls=True, lang='en', use_gpu=False)
+        ocr_model = PaddleOCR(use_angle_cls=True, lang='id')
     return ocr_model
 
 STOPWORDS_ID = {
