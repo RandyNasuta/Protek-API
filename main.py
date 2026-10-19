@@ -69,27 +69,43 @@ async def detect_phishing_image(file: UploadFile = File(...)):
         img_cv2 = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
         
         if img_cv2 is None:
-            raise ValueError("Format file tidak didukung atau rusak.")
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "code": 400,
+                    "status": "error",
+                    "message": "Format file tidak didukung atau gambar rusak.",
+                    "data": None
+                }
+            )
         
         extracted_text = extract_text_from_image(img_cv2)
         
         if not extracted_text.strip():
-            return {
-                "status": "Success",
-                "type": "image",
-                "message": "Tidak ada teks yang dapat diekstrak dari gambar."
-            }
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "code": 400,
+                    "status": "error",
+                    "message": "Tidak ada teks yang dapat diekstrak dari gambar.",
+                    "data": None
+                }
+            )
         
         prediction, score = predict(extracted_text)
         is_phishing = (prediction == 'spam')
     
     except Exception as e:
         print(f"Error saat memproses gambar: {str(e)}")
-        return {
-            "status": "Error",
-            "type": "image",
-            "message": f"Terjadi kesalahan saat memproses gambar: {str(e)}"
-        }
+        return JSONResponse(
+            status_code=500,
+            content={
+                "code": 500,
+                "status": "error",
+                "message": f"Terjadi kesalahan saat memproses gambar: {str(e)}",
+                "data": None
+            }
+        )
         
     if is_phishing:
         severity = "Tinggi" if score > 0.8 else "Sedang"
@@ -101,16 +117,17 @@ async def detect_phishing_image(file: UploadFile = File(...)):
         recommendation = "Anda dapat membaca atau membalas pesan ini seperti biasa. Tetap waspada jika pengirim meminta uang."
             
     return {
-        "status": "Success",
-        "type": "image",
-        "filename": file.filename,
-        "extracted_text_preview": extracted_text,
-        "analysis": {
+        "code": 200,
+        "status": "success",
+        "message": "Analisis gambar berhasil",
+        "data": {
+            "type": "image",
             "is_phishing": is_phishing,
             "confidence": round(score, 4),
             "severity_level": severity,
             "message": message,
-            "recommendation": recommendation
+            "recommendation": recommendation,
+            "extracted_text_preview": extracted_text
         }
     }
 
