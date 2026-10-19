@@ -49,19 +49,32 @@ def preprocess_image(img_np):
     return adaptive_thresh
 
 def extract_text_from_image(image_input):
-    processed_image = preprocess_image(image_input)
-    
-    model = get_ocr()
-    result = model.ocr(processed_image)
-    extracted_text = []
-    
-    if result and result[0]:
-        for line in result[0]:
-            raw_text = line[1][0]
-            cleaned_text = clean_text(raw_text)
-            
-            if cleaned_text:
-                extracted_text.append(cleaned_text)
-            
-    print(extracted_text)
-    return " ".join(extracted_text)
+    try:
+        processed_image = preprocess_image(image_input)
+        if len(processed_image.shape) == 2:
+            processed_image = cv2.cvtColor(processed_image, cv2.COLOR_GRAY2BGR)
+                
+        model = get_ocr()
+        result = model.ocr(processed_image)
+        extracted_text = []
+        
+        if not result:
+            return ""
+        
+        for line in result:
+            if not line:
+                continue
+            for sub_line in line:
+                if isinstance(sub_line, (list, tuple)) and len(sub_line) >= 2:
+                    text_info = sub_line[1]
+                    if isinstance(text_info, (list, tuple)) and len(text_info) > 0:
+                        raw_text = text_info[0]
+                        cleaned_text = clean_text(raw_text)
+                        if cleaned_text:
+                            extracted_text.append(cleaned_text)
+                            
+        print("Hasil ekstraksi teks:", extracted_text)
+        return " ".join(extracted_text)
+    except Exception as e:
+        print(f"Error saat ekstrak teks OCR: {str(e)}")
+        return ""
