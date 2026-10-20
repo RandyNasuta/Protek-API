@@ -1,6 +1,7 @@
+
 fastapi
 uvicorn
-numpy<2.0.0
+numpy==1.26.4
 opencv-python-headless
 paddlepaddle==3.2.2
 paddleocr
@@ -10,3 +11,12 @@ Sastrawi
 scikit-learn==1.7.2
 gradio
 spaces
+beautifulsoup4
+requests
+transformers
+torch
+datasets==3.6.0
+pyarrow==19.0.1
+PyYAML==6.0.2
+setuptools
+accelerate>=1.1.0
