@@ -1,3 +1,4 @@
+
 import re
 import requests
 import feedparser
@@ -51,22 +52,8 @@ STOPWORDS = {
     "the", "a", "an", "is", "of", "to", "in", "and", "for", "on", "with",
     "by", "from", "was", "were", "are", "as", "at", "be",
     "berita", "artikel", "klaim", "menurut", "terbaru", "terkini",
-    "hari", "kumpulan"
-}
-
-MONTH_MAP = {
-    "januari": "01",
-    "februari": "02",
-    "maret": "03",
-    "april": "04",
-    "mei": "05",
-    "juni": "06",
-    "juli": "07",
-    "agustus": "08",
-    "september": "09",
-    "oktober": "10",
-    "november": "11",
-    "desember": "12",
+    "hari", "kumpulan", "viral", "media", "sosial", "mengatakan",
+    "menyebutkan", "disebut", "terkait", "terjadi", "informasi",
 }
 
 
@@ -74,17 +61,22 @@ def normalize_text(text):
     text = str(text or "").lower()
     text = re.sub(r"https?://\S+|www\.\S+", " ", text)
     text = re.sub(r"<[^>]+>", " ", text)
-    text = (
-        text.replace("&amp;", " ")
-        .replace("&quot;", " ")
-        .replace("&#39;", " ")
-        .replace("&nbsp;", " ")
-    )
+
+    replacements = {
+        "&amp;": " ",
+        "&quot;": " ",
+        "&#39;": " ",
+        "&nbsp;": " ",
+    }
+
+    for old, new in replacements.items():
+        text = text.replace(old, new)
+
     text = re.sub(r"[^a-z0-9\s]", " ", text)
     return " ".join(text.split())
 
 
-def extract_keywords(text, max_words=8):
+def extract_keywords(text, max_words=100):
     words = normalize_text(text).split()
     selected = []
     seen = set()
@@ -92,9 +84,11 @@ def extract_keywords(text, max_words=8):
     for word in words:
         if len(word) < 3 or word in STOPWORDS:
             continue
+
         if word not in seen:
             selected.append(word)
             seen.add(word)
+
         if len(selected) >= max_words:
             break
 
@@ -102,8 +96,7 @@ def extract_keywords(text, max_words=8):
 
 
 def keyword_score(query, title, summary=""):
-    """Skor kemiripan teks, bukan probabilitas kebenaran klaim."""
-    query_words = set(extract_keywords(query, max_words=100))
+    query_words = set(extract_keywords(query, max_words=200))
     document_words = set(
         extract_keywords(f"{title} {summary}", max_words=200)
     )
@@ -112,6 +105,10 @@ def keyword_score(query, title, summary=""):
         return 0.0
 
     matched = query_words & document_words
+
+    if not matched:
+        return 0.0
+
     query_coverage = len(matched) / len(query_words)
     document_precision = len(matched) / len(document_words)
     denominator = query_coverage + document_precision
@@ -128,23 +125,31 @@ def keyword_score(query, title, summary=""):
 def _valid_http_url(url):
     try:
         parsed = urlparse(str(url or "").strip())
-        return parsed.scheme in ("http", "https") and bool(parsed.hostname)
+        return (
+            parsed.scheme in ("http", "https")
+            and bool(parsed.hostname)
+        )
     except (TypeError, ValueError):
         return False
 
 
 def _clean_snippet(text):
     text = re.sub(r"<[^>]+>", " ", str(text or ""))
-    text = (
-        text.replace("&amp;", "&")
-        .replace("&quot;", '"')
-        .replace("&#39;", "'")
-        .replace("&nbsp;", " ")
-    )
-    return " ".join(text.split())[:500]
+
+    replacements = {
+        "&amp;": "&",
+        "&quot;": '"',
+        "&#39;": "'",
+        "&nbsp;": " ",
+    }
+
+    for old, new in replacements.items():
+        text = text.replace(old, new)
+
+    return " ".join(text.split())[:700]
 
 
-def read_rss_feed(feed_config, query, limit=5):
+def read_rss_feed(feed_config, query, limit=10):
     try:
         response = requests.get(
             feed_config["url"],
@@ -152,20 +157,27 @@ def read_rss_feed(feed_config, query, limit=5):
             timeout=TIMEOUT,
         )
         response.raise_for_status()
+
         parsed = feedparser.parse(response.content)
         results = []
 
-        for entry in parsed.entries[:50]:
+        for entry in parsed.entries[:60]:
             title = (entry.get("title") or "").strip()
             url = (entry.get("link") or "").strip()
-            summary = entry.get("summary") or ""
-            published = entry.get("published") or entry.get("updated") or ""
+            summary = _clean_snippet(entry.get("summary") or "")
+            published = (
+                entry.get("published")
+                or entry.get("updated")
+                or ""
+            )
 
             if not title or not _valid_http_url(url):
                 continue
 
             score = keyword_score(query, title, summary)
-            if score < 0.30:
+
+            # Sedikit lebih longgar untuk RSS pemeriksaan fakta.
+            if score < 0.15:
                 continue
 
             results.append({
@@ -173,64 +185,82 @@ def read_rss_feed(feed_config, query, limit=5):
                 "url": url,
                 "publisher": feed_config["name"],
                 "published": published,
-                "snippet": _clean_snippet(summary),
+                "snippet": summary,
                 "relevance_score": score,
+                "category": "fact_checks",
             })
 
         results.sort(
             key=lambda item: item["relevance_score"],
             reverse=True,
         )
+
         return {
             "status": "MATCHES_FOUND" if results else "NO_MATCHES",
             "results": results[:limit],
         }
 
     except Exception as exc:
-        print(f"[PUBLIC SOURCES] RSS error ({feed_config['name']}): {exc}")
+        print(
+            f"[PUBLIC SOURCES] RSS error "
+            f"({feed_config['name']}): {exc}"
+        )
         return {"status": "UNAVAILABLE", "results": []}
 
 
 def search_google_news_rss(query, domain, limit=5):
     search_terms = " ".join(str(query or "").split()).strip()
+
     if not search_terms:
         return {"status": "NO_MATCHES", "results": []}
 
     search_query = f"site:{domain} {search_terms}"
+
     params = urlencode({
         "q": search_query,
         "hl": "id",
         "gl": "ID",
         "ceid": "ID:id",
     })
+
     url = f"https://news.google.com/rss/search?{params}"
 
-    print(f"[SEARCH QUERY] domain={domain}, query={search_query}")
-
     try:
-        response = requests.get(url, headers=HEADERS, timeout=TIMEOUT)
+        response = requests.get(
+            url,
+            headers=HEADERS,
+            timeout=TIMEOUT,
+        )
         response.raise_for_status()
+
         parsed = feedparser.parse(response.content)
         results = []
 
-        for entry in parsed.entries[:30]:
+        for entry in parsed.entries[:25]:
             title = (entry.get("title") or "").strip()
             article_url = (entry.get("link") or "").strip()
-            summary = entry.get("summary") or ""
-            published = entry.get("published") or entry.get("updated") or ""
+            summary = _clean_snippet(entry.get("summary") or "")
+            published = (
+                entry.get("published")
+                or entry.get("updated")
+                or ""
+            )
 
             if not title or not _valid_http_url(article_url):
                 continue
 
             source_info = entry.get("source", {})
             publisher = ""
+
             if hasattr(source_info, "get"):
                 publisher = (source_info.get("title") or "").strip()
+
             if not publisher:
                 publisher = domain
 
             score = keyword_score(query, title, summary)
-            if score < 0.30:
+
+            if score < 0.15:
                 continue
 
             results.append({
@@ -238,21 +268,30 @@ def search_google_news_rss(query, domain, limit=5):
                 "url": article_url,
                 "publisher": publisher,
                 "published": published,
-                "snippet": _clean_snippet(summary),
+                "snippet": summary,
                 "relevance_score": score,
+                "category": (
+                    "official_sources"
+                    if domain in OFFICIAL_DOMAINS
+                    else "news_comparisons"
+                ),
             })
 
         results.sort(
             key=lambda item: item["relevance_score"],
             reverse=True,
         )
+
         return {
             "status": "MATCHES_FOUND" if results else "NO_MATCHES",
             "results": results[:limit],
         }
 
     except Exception as exc:
-        print(f"[PUBLIC SOURCES] Google News RSS error ({domain}): {exc}")
+        print(
+            f"[PUBLIC SOURCES] Google News RSS error "
+            f"({domain}): {exc}"
+        )
         return {"status": "UNAVAILABLE", "results": []}
 
 
@@ -262,6 +301,7 @@ def normalize_article_url(url):
 
     parsed = urlparse(str(url).strip())
     hostname = (parsed.hostname or "").lower()
+
     if hostname.startswith("www."):
         hostname = hostname[4:]
 
@@ -276,6 +316,7 @@ def is_same_article(item, query, source_url=None):
         return True
 
     title = (item.get("title") or "").strip()
+
     if " - " in title:
         title = title.rsplit(" - ", 1)[0].strip()
 
@@ -290,6 +331,7 @@ def is_same_article(item, query, source_url=None):
 
 def is_generic_listing_title(title):
     normalized = normalize_text(title)
+
     generic_patterns = [
         "artikel terbaru terkini",
         "hari ini artikel terbaru",
@@ -297,265 +339,262 @@ def is_generic_listing_title(title):
         "kumpulan artikel",
         "indeks berita",
     ]
-    return any(pattern in normalized for pattern in generic_patterns)
 
-
-def build_search_queries(text, max_queries=3):
-    text = str(text or "")
-    text = re.sub(
-        r"https?://\S+|www\.\S+",
-        " ",
-        text,
-        flags=re.IGNORECASE,
+    return any(
+        pattern in normalized
+        for pattern in generic_patterns
     )
-    text = re.sub(r"\bSHARE\s+NOW\b", " ", text, flags=re.IGNORECASE)
-    text = re.sub(
-        r"\(Dok\.?\s*Istimewa\)",
-        " ",
-        text,
-        flags=re.IGNORECASE,
-    )
-
-    month_names = (
-        r"Januari|Februari|Maret|April|Mei|Juni|Juli|Agustus|"
-        r"September|Oktober|November|Desember"
-    )
-
-    english_months = (
-        r"January|February|March|April|May|June|July|August|"
-        r"September|October|November|December"
-    )
-    all_months = month_names + "|" + english_months
-    text = re.sub(
-        r"\b[A-Z][A-Za-z.'-]+(?:\s+[A-Z][A-Za-z.'-]+){1,4}"
-        r"\s*[•·]\s*\d{1,2}\s+(?:" + all_months + r")"
-        r"\s+\d{4}(?:\s+\d{1,2}[:.]\d{2})?",
-        " ",
-        text,
-        flags=re.IGNORECASE,
-    )
-
-    text = re.sub(r"\b(?:share now|read more|baca juga)\b", " ", text, flags=re.I)
-    text = " ".join(text.split())
-    if not text:
-        return []
-
-    sentences = re.split(r"(?<=[.!?])\s+", text)
-    candidates = []
-    seen = set()
-
-    for sentence in sentences:
-        sentence = sentence.strip(" \t\n\"'")
-        if len(sentence.split()) < 5:
-            continue
-
-        normalized = normalize_text(sentence)
-        if not normalized or normalized in seen:
-            continue
-        seen.add(normalized)
-
-        keywords = extract_keywords(sentence, max_words=10)
-        if len(keywords) < 3:
-            continue
-
-        money = re.search(
-            r"\bRp\.?\s*\d[\d.,]*",
-            sentence,
-            flags=re.IGNORECASE,
-        )
-        percentage = re.search(
-            r"(?<!\w)\d+(?:[.,]\d+)?\s*%",
-            sentence,
-        )
-        date = re.search(
-            r"\b(?:\d{1,2}\s+(?:" + all_months + r")\s+\d{4}"
-            r"|\d{1,2}[/-]\d{1,2}[/-]\d{4})\b",
-            sentence,
-            flags=re.IGNORECASE,
-        )
-
-        facts = []
-        if money:
-            facts.append(money.group(0))
-        if percentage:
-            facts.append(percentage.group(0))
-        if date:
-            facts.append(date.group(0))
-
-        query_parts = keywords[:]
-        for fact in facts:
-            if fact not in query_parts:
-                query_parts.append(fact)
-
-        search_query = " ".join(query_parts).strip()[:180]
-        score = (
-            3 * int(money is not None)
-            + 2 * int(percentage is not None)
-            + int(date is not None)
-            + min(len(keywords), 10) / 10
-        )
-        candidates.append({"query": search_query, "score": score})
-
-    candidates.sort(key=lambda item: item["score"], reverse=True)
-    queries = []
-
-    for candidate in candidates:
-        candidate_query = candidate["query"]
-        if candidate_query and candidate_query not in queries:
-            queries.append(candidate_query)
-        if len(queries) >= max_queries:
-            break
-
-    if not queries:
-        fallback = extract_keywords(text, max_words=10)
-        if fallback:
-            queries.append(" ".join(fallback)[:180])
-
-    return queries
-
-
-def get_title_key(item):
-    title = str(item.get("title") or "").strip()
-    title = re.sub(
-        r"\s*[-|–—]\s*(Kompas\.com|Tempo\.co|Liputan6\.com|ANTARA News)\s*$",
-        "",
-        title,
-        flags=re.IGNORECASE,
-    )
-    return normalize_text(title)
-
-
-def get_publisher_key(item):
-    publisher = str(item.get("publisher") or "").strip()
-    if not publisher:
-        title = str(item.get("title") or "")
-        match = re.search(
-            r"\s*[-|–—]\s*(Kompas\.com|Tempo\.co|Liputan6\.com|ANTARA News)\s*$",
-            title,
-            flags=re.IGNORECASE,
-        )
-        if match:
-            publisher = match.group(1)
-    return normalize_text(publisher)
 
 
 def deduplicate_items(items, category, query, source_url=None):
     unique_items = []
+    seen_urls = set()
+    seen_titles = set()
 
     for item in items:
         title = item.get("title", "") or ""
 
         if category == "news_comparisons":
             if is_same_article(item, query, source_url):
-                print(
-                    "[PUBLIC SOURCES] dilewati, artikel sumber yang sama: "
-                    f"{title}"
-                )
                 continue
+
             if is_generic_listing_title(title):
-                print(
-                    "[PUBLIC SOURCES] dilewati, judul generik: "
-                    f"{title}"
-                )
                 continue
 
         url_key = normalize_article_url(item.get("url", ""))
-        title_key = get_title_key(item)
-        publisher_key = get_publisher_key(item)
-        duplicate_index = None
+        title_key = normalize_text(title)
+        publisher_key = normalize_text(item.get("publisher", ""))
 
-        for index, existing in enumerate(unique_items):
-            existing_url = normalize_article_url(existing.get("url", ""))
-            same_url = bool(url_key and existing_url and url_key == existing_url)
-            same_title_publisher = (
-                bool(title_key)
-                and bool(publisher_key)
-                and title_key == get_title_key(existing)
-                and publisher_key == get_publisher_key(existing)
-            )
-            if same_url or same_title_publisher:
-                duplicate_index = index
-                break
+        if url_key and url_key in seen_urls:
+            continue
 
-        if duplicate_index is None:
-            unique_items.append(item)
-        elif item.get("relevance_score", 0) > unique_items[duplicate_index].get(
-            "relevance_score", 0
-        ):
-            unique_items[duplicate_index] = item
+        duplicate_key = (title_key, publisher_key)
+
+        if title_key and duplicate_key in seen_titles:
+            continue
+
+        if url_key:
+            seen_urls.add(url_key)
+
+        if title_key:
+            seen_titles.add(duplicate_key)
+
+        unique_items.append(item)
 
     unique_items.sort(
         key=lambda item: item.get("relevance_score", 0),
         reverse=True,
     )
-    return unique_items[:10]
+
+    return unique_items[:20]
 
 
-def _normalize_number(value):
-    digits = re.sub(r"\D", "", str(value or ""))
-    return (digits.lstrip("0") or "0") if digits else ""
+def assess_factcheck_item(item, query):
+    """
+    Mengidentifikasi hasil pemeriksaan fakta yang memiliki
+    label eksplisit dan kemiripan yang memadai.
 
+    Skor kemiripan hanya mengukur relevansi teks, bukan
+    probabilitas bahwa suatu klaim benar atau salah.
+    """
+    title = str(item.get("title") or "")
+    snippet = str(item.get("snippet") or "")
+    publisher = str(item.get("publisher") or "")
 
-def _extract_money(text):
-    matches = re.findall(
-        r"\bRp\.?\s*([\d][\d.,]*)",
-        str(text or ""),
-        flags=re.IGNORECASE,
+    combined = f"{title} {snippet}"
+    normalized_title = normalize_text(title)
+    normalized_combined = normalize_text(combined)
+
+    query_keywords = set(extract_keywords(query, max_words=200))
+    source_keywords = set(
+        extract_keywords(combined, max_words=200)
     )
-    return {
-        _normalize_number(value)
-        for value in matches
-        if _normalize_number(value)
-    }
 
+    matched_keywords = query_keywords & source_keywords
 
-def _extract_percentages(text):
-    matches = re.findall(
-        r"(?<!\w)(\d+(?:[.,]\d+)?)\s*%",
-        str(text or ""),
+    overlap = (
+        len(matched_keywords) / max(len(query_keywords), 1)
     )
-    values = set()
-    for value in matches:
-        try:
-            values.add(round(float(value.replace(",", ".")), 4))
-        except (ValueError, TypeError):
-            continue
-    return values
 
-
-def _extract_dates(text):
-    text = str(text or "").lower()
-    dates = set()
-
-    month_pattern = (
-        r"\b(\d{1,2})\s+"
-        r"(januari|februari|maret|april|mei|juni|juli|agustus|"
-        r"september|oktober|november|desember|"
-        r"january|february|march|april|may|june|july|august|"
-        r"september|october|november|december)\s+(\d{4})\b"
+    # Sumber harus berasal dari daftar pemeriksaan fakta tepercaya
+    # yang dikonfigurasi di atas.
+    trusted_publisher = (
+        normalize_text(publisher) == normalize_text("TurnBackHoax")
+        or "turnbackhoax.id" in str(item.get("url") or "").lower()
     )
-    english_month_map = {
-        "january": "01", "february": "02", "march": "03",
-        "april": "04", "may": "05", "june": "06",
-        "july": "07", "august": "08", "september": "09",
-        "october": "10", "november": "11", "december": "12",
-    }
-    full_month_map = {**MONTH_MAP, **english_month_map}
 
-    for day, month, year in re.findall(month_pattern, text, flags=re.IGNORECASE):
-        day_num = int(day)
-        if 1 <= day_num <= 31:
-            dates.add(
-                f"{int(year):04d}-{full_month_map[month.lower()]}-{day_num:02d}"
+    false_patterns = [
+        r"\bsalah\b",
+        r"\bhoaks\b",
+        r"\bhoax\b",
+        r"\bkeliru\b",
+        r"\bdisinformasi\b",
+        r"\bmenyesatkan\b",
+        r"\bfaktanya tidak benar\b",
+    ]
+
+    true_patterns = [
+        r"\bbenar\b",
+        r"\bfakta\b",
+        r"\bterbukti benar\b",
+        r"\btidak menyesatkan\b",
+    ]
+
+    mixed_patterns = [
+        r"\bsebagian benar\b",
+        r"\bsebagian salah\b",
+        r"\bkurang tepat\b",
+        r"\bperlu diluruskan\b",
+    ]
+
+    # Label harus muncul di judul, agar kata "salah" yang kebetulan
+    # muncul di isi artikel tidak otomatis menjadi sebuah vonis.
+    is_false = any(
+        re.search(pattern, normalized_title)
+        for pattern in false_patterns
+    )
+
+    is_true = any(
+        re.search(pattern, normalized_title)
+        for pattern in true_patterns
+    )
+
+    is_mixed = any(
+        re.search(pattern, normalized_title)
+        for pattern in mixed_patterns
+    )
+
+    # Tolak kecocokan lemah. Harus ada setidaknya tiga kata
+    # kunci yang sama dan overlap minimum 0,25.
+    relevant = (
+        len(matched_keywords) >= 3
+        and overlap >= 0.25
+    )
+
+    decision = "REVIEW"
+    reason = (
+        "Sumber belum cukup cocok dengan klaim atau "
+        "tidak memiliki label pemeriksaan fakta yang tegas."
+    )
+
+    if trusted_publisher and relevant:
+        if is_mixed:
+            decision = "REVIEW"
+            reason = (
+                "Artikel pemeriksaan fakta relevan, tetapi "
+                "judul menunjukkan penilaian campuran atau parsial."
+            )
+        elif is_false and not is_true:
+            decision = "HOAX"
+            reason = (
+                "Sumber pemeriksaan fakta tepercaya memiliki label "
+                "yang menunjukkan klaim salah dan relevansi teks "
+                "memenuhi ambang pencocokan."
+            )
+        elif is_true and not is_false:
+            decision = "NOT_HOAX"
+            reason = (
+                "Sumber pemeriksaan fakta tepercaya memiliki label "
+                "yang menunjukkan klaim benar dan relevansi teks "
+                "memenuhi ambang pencocokan."
             )
 
-    numeric_pattern = r"\b(\d{1,2})[/-](\d{1,2})[/-](\d{4})\b"
-    for day, month, year in re.findall(numeric_pattern, text):
-        day_num, month_num = int(day), int(month)
-        if 1 <= day_num <= 31 and 1 <= month_num <= 12:
-            dates.add(f"{int(year):04d}-{month_num:02d}-{day_num:02d}")
+    return {
+        "decision": decision,
+        "reason": reason,
+        "keyword_overlap": round(overlap, 3),
+        "matched_keyword_count": len(matched_keywords),
+        "matched_keywords": sorted(matched_keywords)[:20],
+        "trusted_publisher": trusted_publisher,
+        "explicit_false_label": is_false,
+        "explicit_true_label": is_true,
+        "explicit_mixed_label": is_mixed,
+        "source": {
+            "title": title,
+            "url": item.get("url", ""),
+            "publisher": publisher,
+            "published": item.get("published", ""),
+            "snippet": snippet,
+        },
+    }
 
-    return dates
+
+def evaluate_factcheck_sources(factcheck_items, query):
+    """
+    Menghasilkan keputusan berdasarkan artikel pemeriksaan fakta
+    yang lolos pemeriksaan relevansi.
+
+    Bila ditemukan konflik atau lebih dari satu keputusan yang
+    berlawanan, hasilnya REVIEW.
+    """
+    assessments = []
+
+    for item in factcheck_items:
+        assessment = assess_factcheck_item(item, query)
+        item["match_assessment"] = (
+            "POTENTIAL_CLAIM_MATCH"
+            if assessment["decision"] != "REVIEW"
+            else "RELATED_TOPIC"
+        )
+        item["keyword_overlap"] = assessment["keyword_overlap"]
+        item["matched_keywords"] = assessment["matched_keywords"]
+        item["factcheck_assessment"] = assessment
+        assessments.append(assessment)
+
+    decisive = [
+        item for item in assessments
+        if item["decision"] in ("HOAX", "NOT_HOAX")
+    ]
+
+    decisions = {item["decision"] for item in decisive}
+
+    if len(decisions) > 1:
+        return {
+            "decision": "REVIEW",
+            "reason": (
+                "Ditemukan hasil pemeriksaan fakta yang memberikan "
+                "keputusan berbeda. Klaim perlu ditinjau manual."
+            ),
+            "evidence": [
+                item["source"] for item in decisive
+            ],
+        }
+
+    if len(decisions) == 1:
+        selected_decision = next(iter(decisions))
+        selected = [
+            item for item in decisive
+            if item["decision"] == selected_decision
+        ]
+
+        selected.sort(
+            key=lambda item: (
+                item["keyword_overlap"],
+                item["matched_keyword_count"],
+            ),
+            reverse=True,
+        )
+
+        best = selected[0]
+
+        return {
+            "decision": selected_decision,
+            "reason": best["reason"],
+            "evidence": [
+                item["source"] for item in selected[:5]
+            ],
+            "keyword_overlap": best["keyword_overlap"],
+        }
+
+    return {
+        "decision": "REVIEW",
+        "reason": (
+            "Belum ditemukan artikel pemeriksaan fakta tepercaya "
+            "yang cocok dan memiliki label keputusan eksplisit. "
+            "Tidak ditemukannya kecocokan bukan bukti bahwa klaim benar."
+        ),
+        "evidence": [],
+    }
 
 
 def verify_with_public_sources(query, source_url=None):
@@ -571,61 +610,65 @@ def verify_with_public_sources(query, source_url=None):
             "verification_level": "NONE",
             "message": "Teks pencarian tidak tersedia.",
             "sources": empty_sources,
+            "factcheck_decision": {
+                "decision": "REVIEW",
+                "reason": "Teks pencarian tidak tersedia.",
+                "evidence": [],
+            },
         }
 
     query = " ".join(str(query).split())[:1500]
-    search_queries = build_search_queries(query, max_queries=3)
 
-    if not search_queries:
-        fallback = extract_keywords(query, max_words=10)
-        search_queries = [" ".join(fallback)] if fallback else []
+    search_keywords = extract_keywords(query, max_words=10)
+    search_text = " ".join(search_keywords)
 
-    if not search_queries:
+    if not search_text:
         return {
             "status": "UNAVAILABLE",
             "verification_level": "NONE",
-            "message": "Tidak cukup kata kunci untuk melakukan pencarian.",
+            "message": "Tidak cukup kata kunci untuk pencarian.",
             "sources": empty_sources,
+            "factcheck_decision": {
+                "decision": "REVIEW",
+                "reason": "Tidak cukup kata kunci untuk pencarian.",
+                "evidence": [],
+            },
         }
-
-    print(f"[PUBLIC SOURCES] jumlah_kueri={len(search_queries)}")
-    for search_text in search_queries:
-        print(f"[PUBLIC SOURCES] kueri={search_text}")
 
     results_by_category = {
         "fact_checks": [],
         "news_comparisons": [],
         "official_sources": [],
     }
+
     statuses = []
     jobs = []
 
-    for category, feeds in RSS_FEEDS.items():
-        for feed in feeds:
-            jobs.append((
-                category,
-                feed["name"],
-                read_rss_feed,
-                (feed, query),
-            ))
+    # RSS pemeriksaan fakta menggunakan teks klaim yang tersedia.
+    for feed in RSS_FEEDS["fact_checks"]:
+        jobs.append((
+            "fact_checks",
+            feed["name"],
+            read_rss_feed,
+            (feed, query),
+        ))
 
+    # Pencarian berita menggunakan kata kunci yang lebih pendek.
     for domain in NEWS_DOMAINS:
-        for search_text in search_queries:
-            jobs.append((
-                "news_comparisons",
-                domain,
-                search_google_news_rss,
-                (search_text, domain),
-            ))
+        jobs.append((
+            "news_comparisons",
+            domain,
+            search_google_news_rss,
+            (search_text, domain),
+        ))
 
     for domain in OFFICIAL_DOMAINS:
-        for search_text in search_queries:
-            jobs.append((
-                "official_sources",
-                domain,
-                search_google_news_rss,
-                (search_text, domain),
-            ))
+        jobs.append((
+            "official_sources",
+            domain,
+            search_google_news_rss,
+            (search_text, domain),
+        ))
 
     with ThreadPoolExecutor(max_workers=8) as executor:
         future_map = {
@@ -635,20 +678,30 @@ def verify_with_public_sources(query, source_url=None):
 
         for future in as_completed(future_map):
             category, name = future_map[future]
+
             try:
                 result = future.result()
             except Exception as exc:
-                print(f"[PUBLIC SOURCES] error={name}: {exc}")
-                result = {"status": "UNAVAILABLE", "results": []}
+                print(
+                    f"[PUBLIC SOURCES] error={name}: {exc}"
+                )
+                result = {
+                    "status": "UNAVAILABLE",
+                    "results": [],
+                }
 
             result_status = result.get("status", "UNAVAILABLE")
             statuses.append(result_status)
-            items = result.get("results", [])
-            print(
-                f"[PUBLIC SOURCES] sumber={name}, kategori={category}, "
-                f"status={result_status}, jumlah_hasil={len(items)}"
+
+            results_by_category[category].extend(
+                result.get("results", [])
             )
-            results_by_category[category].extend(items)
+
+            print(
+                f"[PUBLIC SOURCES] sumber={name}, "
+                f"kategori={category}, status={result_status}, "
+                f"jumlah_hasil={len(result.get('results', []))}"
+            )
 
     for category, items in results_by_category.items():
         results_by_category[category] = deduplicate_items(
@@ -658,81 +711,64 @@ def verify_with_public_sources(query, source_url=None):
             source_url=source_url,
         )
 
-    claim_money = _extract_money(query)
-    claim_percentages = _extract_percentages(query)
-    claim_dates = _extract_dates(query)
-    claim_keywords = set(extract_keywords(query, max_words=100))
+    # Keputusan eksplisit hanya diambil dari kategori fact_checks.
+    factcheck_decision = evaluate_factcheck_sources(
+        results_by_category["fact_checks"],
+        query,
+    )
 
-    potential_matches = 0
-    related_sources = 0
+    total_results = sum(
+        len(items) for items in results_by_category.values()
+    )
 
-    for category, items in results_by_category.items():
-        for item in items:
-            source_text = f"{item.get('title', '')} {item.get('snippet', '')}"
-            source_keywords = set(extract_keywords(source_text, max_words=100))
-            keyword_overlap = (
-                len(claim_keywords & source_keywords) / max(len(claim_keywords), 1)
-            )
+    decisive_factcheck = (
+        factcheck_decision["decision"] in ("HOAX", "NOT_HOAX")
+    )
 
-            matched_facts = []
-            if claim_money & _extract_money(source_text):
-                matched_facts.append("nominal_uang")
-            if claim_percentages & _extract_percentages(source_text):
-                matched_facts.append("persentase")
-            if claim_dates & _extract_dates(source_text):
-                matched_facts.append("tanggal_peristiwa")
-
-            if matched_facts and keyword_overlap >= 0.15:
-                item["match_assessment"] = "POTENTIAL_CLAIM_MATCH"
-                item["matched_facts"] = matched_facts
-                potential_matches += 1
-            else:
-                item["match_assessment"] = "RELATED_TOPIC"
-                item["matched_facts"] = []
-                related_sources += 1
-
-            item["keyword_overlap"] = round(keyword_overlap, 3)
-
-    total_results = sum(len(items) for items in results_by_category.values())
-
-    if potential_matches:
-        status = "POTENTIAL_CLAIM_MATCHES"
-        verification_level = "POTENTIAL_MATCH"
-        message = (
-            "Ditemukan sumber yang cocok dengan sebagian fakta dalam klaim. "
-            "Kecocokan otomatis bukan bukti bahwa klaim benar atau salah. "
-            "Periksa isi sumber dan konteksnya."
-        )
+    if decisive_factcheck:
+        status = "FACTCHECK_DECISION_FOUND"
+        verification_level = "FACTCHECK_MATCH"
+        message = factcheck_decision["reason"]
     elif total_results:
         status = "RELATED_SOURCES_FOUND"
         verification_level = "TOPIC_ONLY"
         message = (
-            "Ditemukan sumber terkait topik, tetapi belum ada kecocokan fakta "
-            "yang cukup untuk mengindikasikan kecocokan dengan klaim spesifik. "
-            "Ini bukan bukti bahwa klaim benar atau salah."
+            "Sumber terkait ditemukan, tetapi belum ada keputusan "
+            "pemeriksaan fakta yang cukup kuat. Hasil ini tidak "
+            "membuktikan klaim benar ataupun salah."
         )
-    elif statuses and all(item_status == "UNAVAILABLE" for item_status in statuses):
+    elif statuses and all(
+        item_status == "UNAVAILABLE"
+        for item_status in statuses
+    ):
         status = "UNAVAILABLE"
         verification_level = "NONE"
-        message = "Sumber eksternal tidak dapat diakses. Coba lagi nanti."
-    elif any(item_status == "UNAVAILABLE" for item_status in statuses):
+        message = (
+            "Sumber eksternal tidak dapat diakses. "
+            "Silakan coba lagi nanti."
+        )
+    elif any(
+        item_status == "UNAVAILABLE"
+        for item_status in statuses
+    ):
         status = "PARTIAL"
         verification_level = "INCOMPLETE"
         message = (
-            "Sebagian sumber eksternal tidak dapat diakses dan belum ditemukan "
-            "hasil yang lolos penyaringan."
+            "Sebagian sumber eksternal tidak dapat diakses. "
+            "Hasil pemeriksaan belum konklusif."
         )
     else:
         status = "NO_MATCHES"
         verification_level = "NONE"
         message = (
-            "Tidak ditemukan sumber pembanding yang memenuhi kriteria. "
-            "Ini bukan bukti bahwa klaim benar atau salah."
+            "Tidak ditemukan sumber pembanding yang memenuhi "
+            "kriteria. Ini bukan bukti bahwa klaim benar."
         )
 
     print(
-        f"[PUBLIC SOURCES] status={status}, total={total_results}, "
-        f"potential_matches={potential_matches}, related_sources={related_sources}"
+        f"[PUBLIC SOURCES] status={status}, "
+        f"total={total_results}, "
+        f"factcheck_decision={factcheck_decision['decision']}"
     )
 
     return {
@@ -740,4 +776,6 @@ def verify_with_public_sources(query, source_url=None):
         "verification_level": verification_level,
         "message": message,
         "sources": results_by_category,
+        "factcheck_decision": factcheck_decision,
     }
+    
