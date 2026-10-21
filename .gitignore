@@ -27,4 +27,4 @@ model_saved/*
 
 hoax_model_results/
 
-assets/*.csvhoax_model_results/
+assets/*.csv
