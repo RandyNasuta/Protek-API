@@ -25,4 +25,6 @@ temp/
 model_saved/*
 !model_saved/*.pkl
 
-assets/*.csv
+hoax_model_results/
+
+assets/*.csvhoax_model_results/

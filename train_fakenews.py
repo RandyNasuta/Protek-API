@@ -18,28 +18,111 @@ if not os.path.exists(dataset_path):
     
 df = pd.read_csv(dataset_path, sep=';', encoding='latin1', on_bad_lines='skip')
 
+print("\nDistribusi label asli:")
+print(df["Label"].value_counts(dropna=False).sort_index())
+
+print("\nContoh data untuk setiap label:")
+for label in sorted(df["Label"].dropna().unique()):
+    print(f"\n=== Label asli: {label} ===")
+
+    samples = df.loc[
+        df["Label"] == label,
+        ["Headline", "Body"]
+    ].head(3)
+
+    for _, row in samples.iterrows():
+        print("Judul:", str(row["Headline"])[:250])
+        print("Isi:", str(row["Body"])[:400])
+        print("-" * 50)
+
 df = df.dropna(axis=1, how='all')
 df = df.dropna(subset=['Label', 'Headline', 'Body'])
 
 df['Full_Text'] = df['Headline'].astype(str) + ". " + df['Body'].astype(str)
 
 def clean_hoax_text(text):
-    text = str(text)
-    noise_patterns = [
-        r'======\s*\(KATEGORI\).*?======',
-        r'======\s*\(SUMBER\).*?======',
-        r'======\s*\(NARASI\).*?======',
-        r'======\s*REFERENSI.*',
-        r'\[SALAH\]|\[HOAKS\]|\[DISINFORMASI\]|'
-        r'\[PENIPUAN\]|\[PALSU\]|\[BENAR\]|\[FAKTA\]',
-    ]
-    for pattern in noise_patterns:
-        text = re.sub(pattern, ' ', text, flags=re.IGNORECASE | re.DOTALL)
+    if pd.isna(text):
+        return ""
 
-    text = re.sub(r'http\S+|www\.\S+', ' urltoken ', text)
-    text = re.sub(r'[^a-zA-Z0-9\s.,?!]', ' ', text)
-    text = re.sub(r'\s+', ' ', text).strip()
+    text = str(text)
+
+    text = re.sub(
+        r"https?://\S+|www\.\S+",
+        " urltoken ",
+        text,
+        flags=re.IGNORECASE
+    )
+
+    text = re.sub(
+        r"={3,}\s*\(?\s*KATEGORI\s*\)?\s*:?\s*[^.=]*",
+        " ",
+        text,
+        flags=re.IGNORECASE
+    )
+
+    text = re.sub(
+        r"={3,}\s*\(?\s*SUMBER\s*\)?\s*:?.*?(?=\.|={3,}|$)",
+        " ",
+        text,
+        flags=re.IGNORECASE
+    )
+
+    text = re.sub(
+        r"={3,}\s*\(?\s*REFERENSI\s*\)?\s*:?.*?(?=\.|={3,}|$)",
+        " ",
+        text,
+        flags=re.IGNORECASE
+    )
+
+    text = re.sub(
+        r"\[\s*(SALAH|HOAKS|DISINFORMASI|PENIPUAN|PALSU|BENAR|FAKTA)\s*\]",
+        " ",
+        text,
+        flags=re.IGNORECASE
+    )
+
+    text = re.sub(
+        r"[^a-zA-Z0-9À-ÿ\s.,?!:;()'\"/-]",
+        " ",
+        text
+    )
+
+    text = re.sub(r"\s+", " ", text).strip()
+    text = re.sub(r"\s*[.]{2,}\s*", ". ", text)
+    text = re.sub(r"\s+\.", ".", text)
+    text = re.sub(r"\.\s*\.", ".", text)
+    text = text.strip(" .")
+
     return text
+
+for i in range(min(3, len(df))):
+    print(f"\n--- Sampel {i + 1} ---")
+    print("Label asli:", df.iloc[i]["Label"])
+    print("Judul:", str(df.iloc[i]["Headline"])[:200])
+
+    teks_asli = str(df.iloc[i]["Headline"]) + ". " + str(df.iloc[i]["Body"])
+    teks_bersih = clean_hoax_text(teks_asli)
+
+    print("Teks sebelum dibersihkan:")
+    print(teks_asli[:500])
+
+    print("\nTeks setelah dibersihkan:")
+    print(teks_bersih[:500])
+
+    print("\nPanjang teks bersih:", len(teks_bersih), "karakter")
+    
+print("\n=== UJI CLEAN_HOAX_TEXT ===")
+
+contoh = (
+    "Isi artikel menjelaskan hasil pemeriksaan fakta. "
+    "====== KATEGORI Hoaks. "
+    "====== SUMBER https://contoh.com/artikel"
+)
+
+hasil = clean_hoax_text(contoh)
+
+print("Sebelum:", contoh)
+print("Sesudah:", hasil)
 
 print("Membersihkan teks dari data leakage")
 df['clean_text'] = df['Full_Text'].apply(clean_hoax_text)
@@ -118,11 +201,19 @@ print("Setup Training")
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Perangkat komputasi: {device.type.upper()}")
 
+
 model = AutoModelForSequenceClassification.from_pretrained(
     model_name,
     num_labels=2,
-    id2label={0: "BUKAN_HOAKS", 1: "HOAKS"},
-    label2id={"BUKAN_HOAKS": 0, "HOAKS": 1},
+    id2label={
+        0: "BUKAN_HOAKS",
+        1: "HOAKS"
+    },
+    label2id={
+        "BUKAN_HOAKS": 0,
+        "HOAKS": 1
+    },
+    ignore_mismatched_sizes=True
 ).to(device)
 
 training_args = TrainingArguments(

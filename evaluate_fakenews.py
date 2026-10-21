@@ -45,29 +45,59 @@ df["Full_Text"] = (
     + df["Body"].astype(str)
 )
 
+
 def clean_hoax_text(text):
+    if pd.isna(text):
+        return ""
+
     text = str(text)
 
-    noise_patterns = [
-        r'======\s*\(KATEGORI\).*?======',
-        r'======\s*\(SUMBER\).*?======',
-        r'======\s*\(NARASI\).*?======',
-        r'======\s*REFERENSI.*',
-        r'\[SALAH\]|\[HOAKS\]|\[DISINFORMASI\]|'
-        r'\[PENIPUAN\]|\[PALSU\]|\[BENAR\]|\[FAKTA\]',
-    ]
+    text = re.sub(
+        r"https?://\S+|www\.\S+",
+        " urltoken ",
+        text,
+        flags=re.IGNORECASE
+    )
 
-    for pattern in noise_patterns:
-        text = re.sub(
-            pattern,
-            " ",
-            text,
-            flags=re.IGNORECASE | re.DOTALL,
-        )
+    text = re.sub(
+        r"={3,}\s*\(?\s*KATEGORI\s*\)?\s*:?\s*[^.=]*",
+        " ",
+        text,
+        flags=re.IGNORECASE
+    )
 
-    text = re.sub(r'http\S+|www\.\S+', ' urltoken ', text)
-    text = re.sub(r'[^a-zA-Z0-9\s.,?!]', ' ', text)
-    text = re.sub(r'\s+', ' ', text).strip()
+    text = re.sub(
+        r"={3,}\s*\(?\s*SUMBER\s*\)?\s*:?.*?(?=\.|={3,}|$)",
+        " ",
+        text,
+        flags=re.IGNORECASE
+    )
+
+    text = re.sub(
+        r"={3,}\s*\(?\s*REFERENSI\s*\)?\s*:?.*?(?=\.|={3,}|$)",
+        " ",
+        text,
+        flags=re.IGNORECASE
+    )
+
+    text = re.sub(
+        r"\[\s*(SALAH|HOAKS|DISINFORMASI|PENIPUAN|PALSU|BENAR|FAKTA)\s*\]",
+        " ",
+        text,
+        flags=re.IGNORECASE
+    )
+
+    text = re.sub(
+        r"[^a-zA-Z0-9À-ÿ\s.,?!:;()'\"/-]",
+        " ",
+        text
+    )
+
+    text = re.sub(r"\s+", " ", text).strip()
+    text = re.sub(r"\s*[.]{2,}\s*", ". ", text)
+    text = re.sub(r"\s+\.", ".", text)
+    text = re.sub(r"\.\s*\.", ".", text)
+    text = text.strip(" .")
 
     return text
 
